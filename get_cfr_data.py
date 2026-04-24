@@ -5,7 +5,7 @@ import pickle
 
 # Config
 ENV_NAME = 'limit-holdem'
-TRAIN_ITERATIONS = 10
+TRAIN_ITERATIONS = 100
 NUM_EPISODES = 1000
 DATA_PATH = './cfr_dataset.pkl'
 
