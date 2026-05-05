@@ -1,7 +1,6 @@
 """
 Train a supervised poker agent using CFR data with entropy regularization
 
-This script:
 1. Loads CFR-generated training data
 2. Trains a neural network to imitate CFR policy (supervised learning)
 3. Optionally adds entropy regularization to encourage unpredictability
@@ -21,17 +20,17 @@ import matplotlib.pyplot as plt
 
 class Config:
     # Data
-    data_path = "./data/cfr_dataset_100.pkl"
+    data_path = "./data/cfr_dataset_5000eps_balanced.pkl"
     val_split = 0.1
 
     # Model
-    hidden_dims = [64, 32]
+    hidden_dims = [32, 16]
 
     # Training
-    epochs = 100
+    epochs = 50
     batch_size = 256
-    lr = 0.01
-    lambda_entropy = 0.05
+    lr = 0.001
+    lambda_entropy_list = [0, 0.05, 0.1, 0.2, 0.3, 0.5] 
 
     seed = 42
     save_dir = "./models"
@@ -253,7 +252,7 @@ def evaluate(model, dataloader, lambda_entropy, device):
     }
 
 
-def train_model(args):
+def train_model(args, lambda_entropy): 
     """Main training loop"""
     
     # Set random seeds for reproducibility
@@ -314,7 +313,7 @@ def train_model(args):
     )
     
     # Training loop
-    print(f"\nStarting training with lambda_entropy={args.lambda_entropy}")
+    print(f"\nStarting training with lambda_entropy={lambda_entropy}")
     print("=" * 70)
     
     history = defaultdict(list)
@@ -322,10 +321,10 @@ def train_model(args):
     
     for epoch in range(args.epochs):
         # Train
-        train_metrics = train_epoch(model, train_loader, optimizer, args.lambda_entropy, device)
+        train_metrics = train_epoch(model, train_loader, optimizer, lambda_entropy, device)
         
         # Validate
-        val_metrics = evaluate(model, val_loader, args.lambda_entropy, device)
+        val_metrics = evaluate(model, val_loader, lambda_entropy, device)
         
         # Learning rate scheduling
         scheduler.step(val_metrics['loss'])
@@ -344,7 +343,7 @@ def train_model(args):
         # Save best model
         if val_metrics['loss'] < best_val_loss:
             best_val_loss = val_metrics['loss']
-            save_path = os.path.join(args.save_dir, f'best_model_lambda_{args.lambda_entropy}.pt')
+            save_path = os.path.join(args.save_dir, f'best_model_lambda_{lambda_entropy}_balanced.pt')
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
@@ -355,7 +354,7 @@ def train_model(args):
             print(f" ! Saved best model (val_loss: {best_val_loss:.4f})")
     
     # Save final model
-    final_path = os.path.join(args.save_dir, f'final_model_lambda_{args.lambda_entropy}.pt')
+    final_path = os.path.join(args.save_dir, f'final_model_lambda_{lambda_entropy}_balanced.pt')
     torch.save({
         'model_state_dict': model.state_dict(),
         'args': args,
@@ -363,13 +362,13 @@ def train_model(args):
     }, final_path)
     
     # Plot training curves
-    plot_training_curves(history, args.save_dir, args.lambda_entropy)
+    plot_training_curves(history, args.save_dir, lambda_entropy)
     
     print("\n" + "=" * 70)
     print(f"Training complete!")
     print(f"Best val loss: {best_val_loss:.4f}")
     print(f"Models saved to: {args.save_dir}")
-
+    
 
 def plot_training_curves(history, save_dir, lambda_entropy):
     """Plot and save training curves"""
@@ -388,7 +387,7 @@ def plot_training_curves(history, save_dir, lambda_entropy):
         ax.grid(True, alpha=0.3)
     
     plt.tight_layout()
-    save_path = os.path.join(save_dir, f'training_curves_lambda_{lambda_entropy}.png')
+    save_path = os.path.join(save_dir, f'training_curves_lambda_{lambda_entropy}_balanced.png')
     plt.savefig(save_path, dpi=150)
     print(f"Training curves saved to: {save_path}")
 
@@ -401,5 +400,7 @@ if __name__ == '__main__':
     # Create save directory
     os.makedirs(args.save_dir, exist_ok=True)
 
-    # Train
-    train_model(args)
+    # Train    
+    for i, lambda_val in enumerate(args.lambda_entropy_list):
+        print(f"MODEL {i+1}/{len(args.lambda_entropy_list)}: λ = {lambda_val}")
+        train_model(args, lambda_val)
