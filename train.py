@@ -21,6 +21,7 @@ import matplotlib.pyplot as plt
 class Config:
     # Data
     data_path = "./data/cfr_dataset_5000eps_balanced.pkl"
+    # use the balanced dataset alternatively, remember to change output names
     val_split = 0.1
 
     # Model
@@ -30,10 +31,11 @@ class Config:
     epochs = 50
     batch_size = 256
     lr = 0.001
-    lambda_entropy_list = [0, 0.05, 0.1, 0.2, 0.3, 0.5] 
+    lambda_entropy_list = [0, 0.1, 0.3, 0.5, 0.8, 1] 
 
     seed = 42
     save_dir = "./models"
+    result_save_dir = "./results/training_curves"
     print_every = 10
 
 
@@ -48,29 +50,17 @@ class PokerDataset(Dataset):
             self.data = pickle.load(f)
         
         print(f"Loaded {len(self.data)} samples")
-        
-        # Analyze dataset
-        self._analyze_dataset()
-    
-    def _analyze_dataset(self):
-        """Print statistics about the dataset"""
-        
-        # Action distribution
-        actions = [ex['action_taken'] for ex in self.data]
-        unique, counts = np.unique(actions, return_counts=True)
-        print("\nAction distribution:")
-        for action, count in zip(unique, counts):
-            print(f"{action}: {count} ({count/len(actions)*100:.1f}%)")
-        
-        # Average entropy
-        entropies = []
-        for ex in self.data:
-            probs = ex['action_probs']
-            probs_clean = probs[probs > 0]
-            if len(probs_clean) > 0:
-                entropy = -np.sum(probs_clean * np.log(probs_clean + 1e-10))
-                entropies.append(entropy)
-    
+
+        # Reverse action order from (check, fold, raise, call) to (call, raise, fold, check)
+        for sample in self.data:
+            sample['action_probs'] = sample['action_probs'][[3, 2, 1, 0]]
+
+        # Relabel based on argmax
+        action_names = ['call', 'raise', 'fold', 'check']
+        for sample in self.data:
+            argmax_idx = sample['action_probs'].argmax()
+            sample['action_taken'] = action_names[argmax_idx]
+
     def __len__(self):
         return len(self.data)
     
@@ -273,7 +263,7 @@ def train_model(args, lambda_entropy):
         dataset, [train_size, val_size]
     )
     
-    print(f"\nSplit: {train_size} train, {val_size} val")
+    print(f"Split: {train_size} train, {val_size} val")
     
     # Create dataloaders
     train_loader = DataLoader(
@@ -294,10 +284,7 @@ def train_model(args, lambda_entropy):
     input_dim = sample['features'].shape[0]
     num_actions = sample['action_probs'].shape[0]
     
-    print(f"\nModel architecture:")
-    print(f"  Input: {input_dim}")
-    print(f"  Hidden: {args.hidden_dims}")
-    print(f"  Output: {num_actions} actions")
+    print(f"Model: Input={input_dim}, Hidden={args.hidden_dims}, Output={num_actions}")
     
     # Create model
     model = PokerNet(
@@ -313,8 +300,7 @@ def train_model(args, lambda_entropy):
     )
     
     # Training loop
-    print(f"\nStarting training with lambda_entropy={lambda_entropy}")
-    print("=" * 70)
+    print(f"Training lambda={lambda_entropy} for {args.epochs} epochs...")
     
     history = defaultdict(list)
     best_val_loss = float('inf')
@@ -336,9 +322,7 @@ def train_model(args, lambda_entropy):
         
         # Print progress
         if (epoch + 1) % args.print_every == 0:
-            print(f"Epoch {epoch+1}/{args.epochs}")
-            print(f"  Train Loss: {train_metrics['loss']:.4f}")
-            print(f"  Val Loss:   {val_metrics['loss']:.4f}")
+            print(f"Epoch {epoch+1}/{args.epochs}: Train={train_metrics['loss']:.4f}, Val={val_metrics['loss']:.4f}")
         
         # Save best model
         if val_metrics['loss'] < best_val_loss:
@@ -351,27 +335,18 @@ def train_model(args, lambda_entropy):
                 'val_loss': best_val_loss,
                 'args': args,
             }, save_path)
-            print(f" ! Saved best model (val_loss: {best_val_loss:.4f})")
-    
-    # Save final model
-    final_path = os.path.join(args.save_dir, f'final_model_lambda_{lambda_entropy}_balanced.pt')
-    torch.save({
-        'model_state_dict': model.state_dict(),
-        'args': args,
-        'history': history,
-    }, final_path)
     
     # Plot training curves
-    plot_training_curves(history, args.save_dir, lambda_entropy)
+    plot_training_curves(history, args.result_save_dir, lambda_entropy)
     
-    print("\n" + "=" * 70)
-    print(f"Training complete!")
-    print(f"Best val loss: {best_val_loss:.4f}")
-    print(f"Models saved to: {args.save_dir}")
+    print(f"Completed!")
+    print("=" * 70)
     
 
 def plot_training_curves(history, save_dir, lambda_entropy):
     """Plot and save training curves"""
+    os.makedirs(save_dir, exist_ok=True)
+    
     fig, axes = plt.subplots(1, 3, figsize=(15, 4))
     
     metrics = ['loss', 'imitation', 'entropy']
@@ -387,9 +362,9 @@ def plot_training_curves(history, save_dir, lambda_entropy):
         ax.grid(True, alpha=0.3)
     
     plt.tight_layout()
-    save_path = os.path.join(save_dir, f'training_curves_lambda_{lambda_entropy}_balanced.png')
-    plt.savefig(save_path, dpi=150)
-    print(f"Training curves saved to: {save_path}")
+    save_path = os.path.join(save_dir, f'training_curves_lambda_{lambda_entropy}.png')
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
 
 
 # Main
@@ -397,10 +372,19 @@ def plot_training_curves(history, save_dir, lambda_entropy):
 if __name__ == '__main__':
     args = Config()
 
-    # Create save directory
+    # Create save directories
     os.makedirs(args.save_dir, exist_ok=True)
+    os.makedirs(args.result_save_dir, exist_ok=True)
+
+    print(f"START TRAINING")
+    print(f"Lambda values: {args.lambda_entropy_list}")
 
     # Train    
     for i, lambda_val in enumerate(args.lambda_entropy_list):
-        print(f"MODEL {i+1}/{len(args.lambda_entropy_list)}: λ = {lambda_val}")
+        print(f"\n[MODEL {i+1}/{len(args.lambda_entropy_list)}] λ = {lambda_val}")
         train_model(args, lambda_val)
+    
+    print("\n" + "="*70)
+    print("ALL TRAINING COMPLETE!")
+    print(f"Models saved to: {args.save_dir}")
+    print(f"Training curves saved to: {args.result_save_dir}")
